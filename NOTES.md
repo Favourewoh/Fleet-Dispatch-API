@@ -11,3 +11,20 @@ GET /health returns 200 with a short JSON status, so I can check that the server
 
 ### Why migrations instead of editing one schema.sql
 A migration is a numbered, recorded change to the database. schema.sql is fine for one fresh database, but on a live database CREATE TABLE fails because the table already exists, and adding DROP TABLE would delete real user data. A migration describes only what changes, such as adding a column, so the rows survive. The migration tool keeps a small table of which migrations have already run, and applies only the new ones, in order. Because of that, my laptop, Neon and my test database all end up with the same schema. Rollbacks are limited: an undo step cannot bring back data from a dropped column, so a wrong change is usually fixed by writing a new migration. I never edit a migration that has already been applied. I write a new one, because the tool would not notice the edit and my databases would quietly differ.
+
+## Fleet and Dispatch API: Step 2, the users migration
+
+### Why TIMESTAMPTZ and NOT NULL for created_at
+TIMESTAMP stores a clock reading with no time zone, so the same value could mean different moments on my laptop, Render and Neon. TIMESTAMPTZ stores an exact moment and converts it for display. I also made created_at NOT NULL with DEFAULT NOW(), because a column with only a default can still be set to NULL by an insert that names it. Delivery attempts and events will depend on correct times, so I started the habit here.
+
+### Why a unique index on LOWER(email)
+A plain UNIQUE on email is case-sensitive, so Ada@club.com and ada@club.com would count as two different accounts. A unique index on LOWER(email) makes the database reject the second one. The index does not clean the value I store, so my code must still lowercase the email before saving it and before every login lookup.
+
+### Why role is VARCHAR with a CHECK
+The CHECK limits role to admin, dispatcher and courier, so a typo like "dispacher" is rejected by the database itself, even if my code has a bug. I used a CHECK instead of a Postgres ENUM because adding a new role later is a plain ALTER TABLE on a CHECK, while changing an ENUM is clumsier.
+
+### Why the down step uses DROP TABLE IF EXISTS
+Every migration has an up step (apply the change) and a down step (undo it). IF EXISTS stops the undo from crashing if the table is already gone. A down step on a table with real data deletes that data, so I only run it on my local database, never on Neon.
+
+### How I checked the result
+I ran the migration, connected with psql, and ran \d users. That showed the real column types, the NOT NULL settings, the unique lower-case email index and the role check, so I know the database matches what I wrote and not just what I intended.
