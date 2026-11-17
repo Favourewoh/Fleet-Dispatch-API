@@ -28,3 +28,17 @@ Every migration has an up step (apply the change) and a down step (undo it). IF 
 
 ### How I checked the result
 I ran the migration, connected with psql, and ran \d users. That showed the real column types, the NOT NULL settings, the unique lower-case email index and the role check, so I know the database matches what I wrote and not just what I intended.
+
+## Fleet and Dispatch API: Step 3, the first-admin seed script
+
+### Why a seed script creates the first admin
+POST /auth/register will be admin-only, so on a fresh database nobody could ever create the first account. A one-time script solves that: it creates the first admin directly in the database, and from then on only an admin can register new users.
+
+### Why the credentials come from environment variables
+The script file goes into git, so a password written in it would be public history forever. ADMIN_EMAIL and ADMIN_PASSWORD live in .env, which is git-ignored, and .env.example holds only the names. The same script works on any environment, and the values change per place. The password is the real secret. On Neon I will run it once with a different password, set only in my terminal for that run, and never reuse the local one.
+
+### Why the script hashes the password and lowercases the email
+The password is hashed with bcrypt before it is saved, so the database never holds the real password. The email is lowercased because my unique index is on LOWER(email), and my login lookup will lowercase it too, so both sides compare the same way.
+
+### Why the script is safe to run twice
+It uses ON CONFLICT on the same lower-case email expression as the unique index, so a second run does not create a second admin or crash. A seed script that breaks when repeated is dangerous, because someone will repeat it.
