@@ -51,4 +51,19 @@ async function authenticateUser({ email, password }) {
   };
 }
 
-module.exports = { authenticateUser };
+async function getCurrentUser(userId) {
+  const { rows } = await pool.query(
+    `SELECT id, name, email, role
+     FROM users
+     WHERE id = $1
+     LIMIT 1`,
+    [userId]
+  );
+
+  return rows[0] || null;
+}
+
+module.exports = { 
+  authenticateUser,
+  getCurrentUser
+};

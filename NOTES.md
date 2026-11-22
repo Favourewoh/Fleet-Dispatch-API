@@ -77,5 +77,19 @@ If the secret were missing or short, tokens could be forged or guessed. The boot
 ### Why the login limiter counts failed attempts only
 The limit is per IP and uses skipSuccessfulRequests, so real users who log in correctly are not blocked, while someone guessing passwords hits 429. I tested it and got [status/when].
 
-### What I chose for an inactive user, and why
-[Your choice: status code and message. Your reason, in your own words.]
+## Fleet and Dispatch API: Step 5, authentication and authorization middleware
+
+### Authentication vs authorization
+authenticateToken answers "who are you?" It reads the Authorization header, expects Bearer followed by the token, verifies it with JWT_SECRET, and puts id and role on req.user. authorizeRoles answers "are you allowed here?" It checks req.user.role against the allowed list. A failure of the first returns 401 and a failure of the second returns 403, so a caller can tell "log in" from "you may not do this".
+
+### Why every token failure returns the same 401
+A missing header, a malformed one, a bad signature and an expired token all return the same 401 and message. The caller learns nothing about which part failed, and I don't leak how my tokens work.
+
+### Why /auth/me selects only the columns it returns
+The query selects id, name, email and role by the id from the verified token, so password_hash is never loaded into the response code at all. A column that is never selected cannot be leaked by a mistake.
+
+### Why JWT_EXPIRES_IN is 15 minutes
+A short expiry shrinks the window an attacker has with a stolen token. The cost is that users must log in again every 15 minutes, because this project has no refresh tokens. That is fine for dispatchers using Postman. I will revisit it when couriers start using the API, either with a longer expiry or by adding refresh tokens on purpose.
+
+### Why authenticateToken does not check the database on every request
+A JWT is valid until it expires, so a user who is deactivated or whose role changes keeps their old access until their current token runs out. I accept this because it saves a database query on every request, and the 15-minute expiry limits the window. If I needed instant revocation, I would check is_active in the database, at least on sensitive routes such as admin registration.
