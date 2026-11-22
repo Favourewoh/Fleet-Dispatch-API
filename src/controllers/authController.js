@@ -1,4 +1,5 @@
-const { authenticateUser, getCurrentUser } = require('../services/authService');
+const { authenticateUser, getCurrentUser, registerUser } = require('../services/authService');
+const { validateAndSanitizeBody } = require('../utils/authHelpers');
 
 async function login(req, res) {
   const { email, password } = req.body || {};
@@ -61,9 +62,50 @@ async function me(req, res) {
       },
     });
   }
+};
+
+async function register(req, res) {
+  let sanitizedData;
+
+  try {
+    sanitizedData = validateAndSanitizeBody(req.body);
+  } catch (err) {
+    return res.status(err.status || 400).json({
+      error: {
+        code: err.code || "VALIDATION_ERROR",
+        message: err.message,
+      },
+    });
+  }
+
+  try {
+    const result = await registerUser(sanitizedData);
+
+    if (!result.ok) {
+      return res.status(result.error?.status || 400).json({
+        error: {
+          code: result.error?.code || "REGISTRATION_FAILED",
+          message: result.error?.message || "Unable to register user.",
+        },
+      });
+    }
+
+    return res.status(201).json({
+      user: result.user,
+    });
+  } catch (err) {
+    console.error("Register error:", err);
+    return res.status(500).json({
+      error: {
+        code: "INTERNAL_SERVER_ERROR",
+        message: "Something went wrong while processing your request.",
+      },
+    });
+  }
 }
 
 module.exports = {
   login,
-  me
+  me,
+  register
 };

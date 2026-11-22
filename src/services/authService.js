@@ -1,6 +1,7 @@
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 const pool = require('../db/index.js');
+const { validateAndSanitizeBody, hashPassword } = require('../utils/authHelpers.js');
 
 const INVALID_CREDENTIALS_ERROR = Object.freeze({
   status: 401,
@@ -13,6 +14,13 @@ const INACTIVE_ACCOUNT_ERROR = Object.freeze({
   code: 'ACCOUNT_INACTIVE',
   message: 'Account is inactive. Contact an administrator.',
 });
+
+const DUPLICATE_EMAIL_ERROR = Object.freeze({
+  status: 409,
+  code: 'EMAIL_ALREADY_EXISTS',
+  message: 'An account with this email already exists',
+});
+
 
 async function authenticateUser({ email, password }) {
   const normalizedEmail = email.trim().toLowerCase();
@@ -63,7 +71,37 @@ async function getCurrentUser(userId) {
   return rows[0] || null;
 }
 
+async function registerUser(data) {
+  const passwordHash = await hashPassword(data.password);
+
+  try {
+    const { rows } = await pool.query(
+      `INSERT INTO users (name, email, password_hash, role, is_active)
+       VALUES ($1, $2, $3, $4, TRUE)
+       RETURNING id, name, email, role, is_active`,
+      [data.name, data.email, passwordHash, data.role]
+    );
+
+    return {
+      ok: true,
+      user: rows[0],
+    };
+  } catch (error) {
+    if (error.code === '23505') {
+      return {
+        ok: false,
+        error: DUPLICATE_EMAIL_ERROR,
+      };
+    }
+
+    throw error;
+  }
+}
+
+module.exports = { authenticateUser, getCurrentUser, registerUser };
+
 module.exports = { 
   authenticateUser,
-  getCurrentUser
+  getCurrentUser,
+  registerUser
 };
