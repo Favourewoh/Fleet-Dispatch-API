@@ -43,6 +43,18 @@ The password is hashed with bcrypt before it is saved, so the database never hol
 ### Why the script is safe to run twice
 It uses ON CONFLICT on the same lower-case email expression as the unique index, so a second run does not create a second admin or crash. A seed script that breaks when repeated is dangerous, because someone will repeat it.
 
+## feat/auth-login (2026-11-22)
+
+- **Endpoint & Architecture:** Implemented `POST /api/v1/auth/login` in CommonJS across `src/routes/auth.js`, `src/controllers/authController.js`, and `src/services/authService.js`, mounted under `/api/v1/auth`.
+- **Startup & Config:** Added boot-time validation requiring `JWT_SECRET` to be present and at least 32 characters long before starting the server, alongside `JWT_EXPIRES_IN` in `.env` / `.env.example`.
+- **Validation & Auth Flow:**
+  - Enforced `400` (`VALIDATION_ERROR`) when `email` or `password` is missing or not a non-empty string.
+  - Looked up users via case-insensitive `LOWER(email)` parameterized queries, verified passwords with `bcrypt.compare`, and returned identical `401` (`INVALID_CREDENTIALS`) responses for unknown emails and wrong passwords.
+  - Returned `403` (`ACCOUNT_INACTIVE`) when `is_active` is `false` after valid credentials so deactivated accounts are clearly distinguished.
+  - Signed JWTs containing only `id` and `role` using `JWT_SECRET` and `JWT_EXPIRES_IN` without logging passwords or tokens.
+- **Rate Limiting:** Added `loginRateLimiter` (`429` `RATE_LIMIT_EXCEEDED`) on `/login` with `skipSuccessfulRequests: true` so only failed attempts count toward the limit.
+- **Verification:** Verified `200` (valid credentials), `401` (wrong password and unknown email), and `403` (inactive user toggled in `psql`) in Postman.
+
 ## Git workflow for the fleet API
 
 ### Why a branch and pull request for every step
@@ -56,3 +68,4 @@ The code, any migration, and the NOTES entry for that step, plus a short descrip
 
 ### What rollback does not cover
 Reverting code does not undo a migration that already ran. A wrong migration is fixed with a new migration.
+
