@@ -93,3 +93,16 @@ A short expiry shrinks the window an attacker has with a stolen token. The cost 
 
 ### Why authenticateToken does not check the database on every request
 A JWT is valid until it expires, so a user who is deactivated or whose role changes keeps their old access until their current token runs out. I accept this because it saves a database query on every request, and the 15-minute expiry limits the window. If I needed instant revocation, I would check is_active in the database, at least on sensitive routes such as admin registration.
+
+### Why POST /auth/register is admin-only
+There is no public sign-up. Staff accounts are created by an admin, so the route sits behind authenticateToken and then authorizeRoles('admin'). The first admin comes from the seed script, and every other account comes through this route.
+
+### Why a role in the request body is safe here
+Taking the role from the body would be dangerous on a public route, because anyone could ask to be admin. Here the route is protected first, so only an admin ever reaches the code that reads it. The value is also checked against the three allowed roles (admin, dispatcher, courier), and the database CHECK constraint is a second line of defence.
+
+### Why I catch the unique violation instead of checking the email first
+If I looked up the email and then inserted, two simultaneous requests could both pass the check, and one would fail later with a confusing error. Instead I insert and catch Postgres error code 23505, which means a unique violation, and return 409 for that code only. Every other error returns a fixed 500 message. This is the same idea as the atomic UPDATE in my first project: let the database be the one place that decides.
+
+### Why the response never contains password_hash
+The insert returns only id, name, email and role. The hash is stored but never sent back.
+
