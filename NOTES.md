@@ -43,18 +43,6 @@ The password is hashed with bcrypt before it is saved, so the database never hol
 ### Why the script is safe to run twice
 It uses ON CONFLICT on the same lower-case email expression as the unique index, so a second run does not create a second admin or crash. A seed script that breaks when repeated is dangerous, because someone will repeat it.
 
-## feat/auth-login (2026-11-22)
-
-- **Endpoint & Architecture:** Implemented `POST /api/v1/auth/login` in CommonJS across `src/routes/auth.js`, `src/controllers/authController.js`, and `src/services/authService.js`, mounted under `/api/v1/auth`.
-- **Startup & Config:** Added boot-time validation requiring `JWT_SECRET` to be present and at least 32 characters long before starting the server, alongside `JWT_EXPIRES_IN` in `.env` / `.env.example`.
-- **Validation & Auth Flow:**
-  - Enforced `400` (`VALIDATION_ERROR`) when `email` or `password` is missing or not a non-empty string.
-  - Looked up users via case-insensitive `LOWER(email)` parameterized queries, verified passwords with `bcrypt.compare`, and returned identical `401` (`INVALID_CREDENTIALS`) responses for unknown emails and wrong passwords.
-  - Returned `403` (`ACCOUNT_INACTIVE`) when `is_active` is `false` after valid credentials so deactivated accounts are clearly distinguished.
-  - Signed JWTs containing only `id` and `role` using `JWT_SECRET` and `JWT_EXPIRES_IN` without logging passwords or tokens.
-- **Rate Limiting:** Added `loginRateLimiter` (`429` `RATE_LIMIT_EXCEEDED`) on `/login` with `skipSuccessfulRequests: true` so only failed attempts count toward the limit.
-- **Verification:** Verified `200` (valid credentials), `401` (wrong password and unknown email), and `403` (inactive user toggled in `psql`) in Postman.
-
 ## Git workflow for the fleet API
 
 ### Why a branch and pull request for every step
@@ -69,3 +57,25 @@ The code, any migration, and the NOTES entry for that step, plus a short descrip
 ### What rollback does not cover
 Reverting code does not undo a migration that already ran. A wrong migration is fixed with a new migration.
 
+## Fleet and Dispatch API: Step 4, login
+
+### Why route, controller and service are separate files
+The route says where a request goes and which checks run first. The controller reads the request and sends the response. The service holds the rules and the database query. A blocked or invalid request never reaches the service, and the rules can be tested without Express.
+
+### Why the same 401 for an unknown email and a wrong password
+If the messages differed, an attacker could use the login route to find out which emails have accounts. Both cases return the same status and the same wording. Input that is missing or not a string is rejected earlier with a 400, before any database work.
+
+### Why the email is lowercased before the lookup
+My unique index is on LOWER(email), so I lowercase the email in the query too. Both sides then compare the same way.
+
+### What the token holds
+The JWT payload holds only id and role, signed with JWT_SECRET and expiring after JWT_EXPIRES_IN. Nothing sensitive goes inside it, because anyone can read a JWT's payload. The role is read from the verified token, never from the request body.
+
+### Why the server refuses to start without a strong JWT_SECRET
+If the secret were missing or short, tokens could be forged or guessed. The boot check stops the server with an error instead of letting it run unsafely.
+
+### Why the login limiter counts failed attempts only
+The limit is per IP and uses skipSuccessfulRequests, so real users who log in correctly are not blocked, while someone guessing passwords hits 429. I tested it and got [status/when].
+
+### What I chose for an inactive user, and why
+[Your choice: status code and message. Your reason, in your own words.]
