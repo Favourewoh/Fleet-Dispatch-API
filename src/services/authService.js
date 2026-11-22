@@ -1,4 +1,5 @@
 const bcrypt = require('bcrypt');
+const jwt = require('jsonwebtoken');
 const pool = require('../db/index.js');
 
 const INVALID_CREDENTIALS_ERROR = Object.freeze({
@@ -38,12 +39,15 @@ async function authenticateUser({ email, password }) {
     return { ok: false, error: INACTIVE_ACCOUNT_ERROR };
   }
 
+  const token = jwt.sign(
+    { id: user.id, role: user.role },
+    process.env.JWT_SECRET,
+    { expiresIn: process.env.JWT_EXPIRES_IN }
+  );
+
   return {
     ok: true,
-    user: {
-      id: user.id,
-      role: user.role,
-    },
+    token,
   };
 }
 

@@ -1,3 +1,5 @@
+const { authenticateUser } = require('../services/authService');
+
 async function login(req, res) {
   const { email, password } = req.body || {};
 
@@ -10,12 +12,30 @@ async function login(req, res) {
     });
   }
 
-  return res.status(501).json({
-    error: {
-      code: 'NOT_IMPLEMENTED',
-      message: 'Login service not implemented yet',
-    },
-  });
+  try {
+    const result = await authenticateUser({ email, password });
+
+    if (!result.ok) {
+      return res.status(result.error.status).json({
+        error: {
+          code: result.error.code,
+          message: result.error.message,
+        },
+      });
+    }
+
+    return res.status(200).json({
+      token: result.token,
+    });
+  } catch (error) {
+    console.error('Login error:', error.message);
+    return res.status(500).json({
+      error: {
+        code: 'INTERNAL_SERVER_ERROR',
+        message: 'Something went wrong while logging in',
+      },
+    });
+  }
 }
 
 module.exports = { login };
