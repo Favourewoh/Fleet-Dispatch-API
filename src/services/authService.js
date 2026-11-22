@@ -7,6 +7,12 @@ const INVALID_CREDENTIALS_ERROR = Object.freeze({
   message: 'Invalid email or password',
 });
 
+const INACTIVE_ACCOUNT_ERROR = Object.freeze({
+  status: 403,
+  code: 'ACCOUNT_INACTIVE',
+  message: 'Account is inactive. Contact an administrator.',
+});
+
 async function authenticateUser({ email, password }) {
   const normalizedEmail = email.trim().toLowerCase();
 
@@ -28,12 +34,15 @@ async function authenticateUser({ email, password }) {
     return { ok: false, error: INVALID_CREDENTIALS_ERROR };
   }
 
+  if (!user.is_active) {
+    return { ok: false, error: INACTIVE_ACCOUNT_ERROR };
+  }
+
   return {
     ok: true,
     user: {
       id: user.id,
       role: user.role,
-      is_active: user.is_active,
     },
   };
 }
