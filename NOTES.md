@@ -54,3 +54,18 @@ It uses ON CONFLICT on the same lower-case email expression as the unique index,
   - Signed JWTs containing only `id` and `role` using `JWT_SECRET` and `JWT_EXPIRES_IN` without logging passwords or tokens.
 - **Rate Limiting:** Added `loginRateLimiter` (`429` `RATE_LIMIT_EXCEEDED`) on `/login` with `skipSuccessfulRequests: true` so only failed attempts count toward the limit.
 - **Verification:** Verified `200` (valid credentials), `401` (wrong password and unknown email), and `403` (inactive user toggled in `psql`) in Postman.
+
+## Git workflow for the fleet API
+
+### Why a branch and pull request for every step
+main must always work, because Render will deploy from it. Every step happens on its own branch (feat/auth-login, docs/git-workflow and so on), and it reaches main only through a pull request. If a step goes wrong, main was never touched. If it goes wrong after merging, git revert adds a new commit that undoes it, so I never use reset or force-push on main.
+
+### Why squash and merge
+Squashing turns a branch's small commits into one clean commit on main, so history reads as one commit per step, and undoing a step is one revert. The small commits stay visible inside the pull request.
+
+### What a pull request contains
+The code, any migration, and the NOTES entry for that step, plus a short description: what, why, how I tested, and database changes. I read the Files changed tab before merging to catch stray secrets and debug lines.
+
+### What rollback does not cover
+Reverting code does not undo a migration that already ran. A wrong migration is fixed with a new migration.
+
