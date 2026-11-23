@@ -106,3 +106,5 @@ If I looked up the email and then inserted, two simultaneous requests could both
 ### Why the response never contains password_hash
 The insert returns only id, name, email and role. The hash is stored but never sent back.
 
+### Why shipments.status has a CHECK as well as code validation
+My code validates the status first, so the caller gets a clear 400. The database CHECK is the last line of defence for anything that does not go through that code: a typo in one query, a seed script, an import, or a hand-typed UPDATE in psql. The real cost of having the rule in two places is maintenance, not speed. Adding a status means changing the code list and writing a migration for the constraint, and if I forget one, they drift apart. I keep the statuses in one constant in my code and note above the CHECK that the two must match. A CHECK only controls which values are allowed. It cannot control which transitions are allowed, because that needs the previous status, so transition rules live in my code, inside the transaction.
