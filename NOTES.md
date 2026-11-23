@@ -137,3 +137,9 @@ DEFAULT now() applies only when a row is inserted. Nothing updates the column on
 
 ### How I checked the result
 I ran the migration, ran down and up again to prove the down step works, then used \d on both tables to confirm the real columns, checks and foreign keys match what I intended.
+
+### Why creating a shipment and logging its first event is one transaction
+Creating a shipment inserts a row into shipments and a first row into shipment_events. If the second insert fails, the first must be undone, or I would have a shipment with no history. A transaction makes the pair all or nothing: BEGIN, both inserts, COMMIT, and ROLLBACK if anything throws. A single SQL statement is atomic on its own, which is why one UPDATE ... RETURNING was enough in my first project, but two statements need an explicit transaction.
+
+### How transactions work with the pg Pool
+pool.query() can use a different connection for each call, so a BEGIN and the inserts after it could land on different connections and there would be no transaction. I borrow one client with pool.connect(), run everything on that client, and release it in a finally block. Forgetting to release leaks connections until the pool is exhausted and the app hangs.
