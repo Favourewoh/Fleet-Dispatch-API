@@ -108,3 +108,32 @@ The insert returns only id, name, email and role. The hash is stored but never s
 
 ### Why shipments.status has a CHECK as well as code validation
 My code validates the status first, so the caller gets a clear 400. The database CHECK is the last line of defence for anything that does not go through that code: a typo in one query, a seed script, an import, or a hand-typed UPDATE in psql. The real cost of having the rule in two places is maintenance, not speed. Adding a status means changing the code list and writing a migration for the constraint, and if I forget one, they drift apart. I keep the statuses in one constant in my code and note above the CHECK that the two must match. A CHECK only controls which values are allowed. It cannot control which transitions are allowed, because that needs the previous status, so transition rules live in my code, inside the transaction.
+
+## Fleet and Dispatch API: Step 6, shipments and shipment_events migration
+
+### Why shipments.status has a CHECK as well as code validation
+My code validates the status first, so the caller gets a clear 400. The database CHECK is the last line of defence for anything that does not go through that code: a typo in one query, a seed script, an import, or a hand-typed UPDATE in psql. The real cost of having the rule in two places is maintenance, not speed. Adding a status means changing the code list and writing a migration for the constraint, and if I forget one, they drift apart. I keep the statuses in one constant in my code and note above the CHECK that the two must match. A CHECK only controls which values are allowed. It cannot control which transitions are allowed, because that needs the previous status, so transition rules live in my code, inside the transaction.
+
+### Why from_status can be NULL
+The very first event of a shipment (its creation) has no previous status, so from_status allows NULL and its CHECK explicitly accepts NULL. to_status is NOT NULL, because every event moves to some status.
+
+### Why ON DELETE RESTRICT on the event history
+shipment_events.shipment_id first used CASCADE, which would silently delete a shipment's whole history when the shipment was deleted. An audit trail exists to survive. My design cancels shipments and never deletes them, so RESTRICT makes the database refuse the one action the design never allows. created_by and changed_by also use RESTRICT, so a user who touched a shipment cannot be deleted.
+
+### Why receiver_phone is text
+Nigerian numbers start with 0, and a number type would drop it. A phone number is an identifier, not something I do arithmetic on, so it is stored as VARCHAR.
+
+### Why weight_kg is NUMERIC with a CHECK above zero
+NUMERIC stores exact decimals, so 2.5 kg stays 2.5. A float could store a rounding error. The CHECK (weight_kg > 0) rejects zero and negative weights at the database level.
+
+### Why tracking_number is just UNIQUE in the database
+The database only guarantees no duplicates. The value itself is generated in my code as a random, non-sequential string, so strangers cannot walk through other shipments' public status by counting.
+
+### Why indexes on status and shipment_id
+I will filter shipments by status and fetch a shipment's events by shipment_id. Indexes make those lookups fast. An index also makes writes slightly slower, so I only add the ones I know I need.
+
+### Why updated_at needs help from my code
+DEFAULT now() applies only when a row is inserted. Nothing updates the column on later changes, so my status UPDATE queries must set updated_at = NOW() themselves.
+
+### How I checked the result
+I ran the migration, ran down and up again to prove the down step works, then used \d on both tables to confirm the real columns, checks and foreign keys match what I intended.
