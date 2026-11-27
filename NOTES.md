@@ -143,3 +143,21 @@ Creating a shipment inserts a row into shipments and a first row into shipment_e
 
 ### How transactions work with the pg Pool
 pool.query() can use a different connection for each call, so a BEGIN and the inserts after it could land on different connections and there would be no transaction. I borrow one client with pool.connect(), run everything on that client, and release it in a finally block. Forgetting to release leaks connections until the pool is exhausted and the app hangs.
+
+
+## Fleet and Dispatch API: Step 7, creating shipments
+
+### Why creating a shipment and logging its first event is one transaction
+Creating a shipment inserts a row into shipments and a first row into shipment_events. If the second insert fails, the first must be undone, or I would have a shipment with no history. A transaction makes the pair all or nothing: BEGIN, both inserts, COMMIT, and ROLLBACK if anything throws. A single SQL statement is atomic on its own, which is why one UPDATE ... RETURNING was enough in my first project, but two statements need an explicit transaction. I proved it by running a script that inserted a shipment and then threw an error on purpose: the row count did not change.
+
+### How transactions work with the pg Pool
+pool.query() can use a different connection for each call, so a BEGIN and the inserts after it could land on different connections and there would be no transaction. I borrow one client with pool.connect(), run everything on that client, and release it in a finally block. Forgetting to release leaks connections until the pool is exhausted and the app hangs. The helper lives in one place and I will reuse it for dispatch.
+
+### Why changed_by comes from the token, not the body
+The first event records who created the shipment. I take that id from req.user, which comes from the verified token, so a caller cannot claim to be someone else.
+
+### What happens if a tracking number collides
+The database guarantees uniqueness with a UNIQUE constraint, and my code generates a random, non-sequential number from at least 8 random bytes, so a collision is extremely unlikely. If an insert hits the unique violation (code 23505 on the tracking number constraint), I rerun the whole transaction with a new number, up to 3 attempts, and return a fixed 500 if all fail. I retry the whole transaction because a failed statement leaves a Postgres transaction unusable until ROLLBACK. I only retry that specific error, so other failures are not hidden. I tested it by forcing a duplicate and it returned the right error message after the third attempt.
+
+### Why not piece IDs in v1
+A piece ID would let one tracking number cover several parcels. That is a different problem from collisions and it changes the data model (a pieces table, and status per piece or per shipment), so it is out of scope for v1. It is on my list for v2.
