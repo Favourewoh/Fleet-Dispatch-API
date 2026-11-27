@@ -1,63 +1,91 @@
 const { withTransaction } = require('../db/transaction');
 const { generateTrackingNumber } = require('../utils/generateTrackingNumber');
 
-const MAX_STRING_LENGTH = 120;
+const MAX_SHORT_TEXT = 120;
 const MAX_PHONE_LENGTH = 32;
 const MAX_ADDRESS_LENGTH = 500;
-const MAX_TRACKING_RETRIES = 3;
+const MAX_COLLISION_RETRIES = 3;
 
-function createValidationError(message) {
+function createHttpError(message, statusCode, code) {
   const err = new Error(message);
-  err.statusCode = 400;
+  err.statusCode = statusCode;
+  if (code) {
+    err.code = code;
+  }
   return err;
 }
 
-function validateCreateShipmentInput(payload = {}) {
-  const stringFields = [
-    ['sender_name', MAX_STRING_LENGTH],
-    ['receiver_name', MAX_STRING_LENGTH],
+function validateShipmentInput(body = {}) {
+  const textRules = [
+    ['sender_name', MAX_SHORT_TEXT],
+    ['receiver_name', MAX_SHORT_TEXT],
     ['receiver_phone', MAX_PHONE_LENGTH],
     ['pickup_address', MAX_ADDRESS_LENGTH],
     ['delivery_address', MAX_ADDRESS_LENGTH],
   ];
 
-  const cleaned = {};
+  const data = {};
 
-  for (const [field, maxLen] of stringFields) {
-    const raw = payload[field];
-    if (typeof raw !== 'string') {
-      throw createValidationError(`${field} must be a string`);
+  for (const [field, maxLength] of textRules) {
+    const value = body[field];
+    if (typeof value !== 'string') {
+      throw createHttpError(`${field} must be a string`, 400, 'VALIDATION_ERROR');
     }
-    const trimmed = raw.trim();
+    const trimmed = value.trim();
     if (!trimmed) {
-      throw createValidationError(`${field} cannot be empty`);
+      throw createHttpError(`${field} must not be empty`, 400, 'VALIDATION_ERROR');
     }
-    if (trimmed.length > maxLen) {
-      throw createValidationError(`${field} must not exceed ${maxLen} characters`);
+    if (trimmed.length > maxLength) {
+      throw createHttpError(
+        `${field} must be at most ${maxLength} characters`,
+        400,
+        'VALIDATION_ERROR'
+      );
     }
-    cleaned[field] = trimmed;
+    data[field] = trimmed;
   }
 
-  const weight = Number(payload.weight_kg);
+  const weight = Number(body.weight_kg);
   if (
-    payload.weight_kg === null ||
-    payload.weight_kg === undefined ||
-    payload.weight_kg === '' ||
+    body.weight_kg === null ||
+    body.weight_kg === undefined ||
+    body.weight_kg === '' ||
     !Number.isFinite(weight) ||
     weight <= 0
   ) {
-    throw createValidationError('weight_kg must be a positive number');
+    throw createHttpError('weight_kg must be a positive number', 400, 'VALIDATION_ERROR');
   }
 
-  cleaned.weight_kg = weight;
-  return cleaned;
+  data.weight_kg = weight;
+  return data;
 }
 
-async function createShipment(payload, actorUserId) {
-  const input = validateCreateShipmentInput(payload);
+function isTrackingNumberCollision(err) {
+  if (!err || err.code !== '23505') {
+    return false;
+  }
+  if (err.constraint) {
+    return err.constraint.includes('tracking_number');
+  }
+  if (err.detail) {
+    return String(err.detail).includes('tracking_number');
+  }
+  return true;
+}
 
-  for (let attempt = 1; attempt <= MAX_TRACKING_RETRIES; attempt += 1) {
-    const trackingNumber = generateTrackingNumber();
+async function createShipment(
+  body,
+  actorUserId,
+  trackingGenerator = generateTrackingNumber
+) {
+  if (!actorUserId) {
+    throw createHttpError('Authenticated user is required', 401, 'UNAUTHORIZED');
+  }
+
+  const input = validateShipmentInput(body);
+
+  for (let attempt = 1; attempt <= MAX_COLLISION_RETRIES; attempt += 1) {
+    const trackingNumber = trackingGenerator();
 
     try {
       return await withTransaction(async (client) => {
@@ -101,16 +129,23 @@ async function createShipment(payload, actorUserId) {
 
         return shipment;
       });
-    } catch (error) {
-      if (error.code === '23505' && attempt < MAX_TRACKING_RETRIES) {
-        continue;
+    } catch (err) {
+      if (isTrackingNumberCollision(err)) {
+        if (attempt < MAX_COLLISION_RETRIES) {
+          continue;
+        }
+        throw createHttpError(
+          'Failed to generate a unique tracking number after multiple attempts',
+          500,
+          'TRACKING_NUMBER_COLLISION'
+        );
       }
-      throw error;
+      throw err;
     }
   }
 }
 
 module.exports = {
   createShipment,
-  validateCreateShipmentInput,
+  validateShipmentInput,
 };
