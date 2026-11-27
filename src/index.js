@@ -2,6 +2,7 @@ require('dotenv').config();
 const express = require('express');
 const pool = require('./db/index.js');
 const authRouter = require('./routes/auth.js');
+const shipmentsRouter = require('./routes/shipments.js');
 
 if (!process.env.JWT_SECRET || process.env.JWT_SECRET.length < 32) {
   console.error('JWT_SECRET must be set and at least 32 characters long');
@@ -31,6 +32,7 @@ app.get('/health', async (req, res) => {
 });
 
 app.use('/api/v1/auth', authRouter);
+app.use('/api/v1/shipments', shipmentsRouter);
 
 app.listen(PORT, () => {
   console.log(`Server is running on port ${PORT}`);
