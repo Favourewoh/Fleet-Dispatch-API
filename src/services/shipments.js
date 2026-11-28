@@ -1,3 +1,4 @@
+const { pool } = require('../db');
 const { withTransaction } = require('../db/transaction');
 const { generateTrackingNumber } = require('../utils/generateTrackingNumber');
 
@@ -6,6 +7,20 @@ const MAX_PHONE_LENGTH = 32;
 const MAX_ADDRESS_LENGTH = 500;
 const MAX_COLLISION_RETRIES = 3;
 
+const SHIPMENT_STATUSES = [
+  'pending',
+  'picked_up',
+  'in_transit',
+  'out_for_delivery',
+  'delivered',
+  'cancelled',
+  'failed',
+];
+
+const DEFAULT_PAGE = 1;
+const DEFAULT_LIMIT = 20;
+const MAX_LIMIT = 50;
+
 function createHttpError(message, statusCode, code) {
   const err = new Error(message);
   err.statusCode = statusCode;
@@ -13,6 +28,43 @@ function createHttpError(message, statusCode, code) {
     err.code = code;
   }
   return err;
+}
+
+function parsePositiveInt(value, fieldName) {
+  if (typeof value === 'number') {
+    if (!Number.isInteger(value) || value <= 0) {
+      throw createHttpError(`${fieldName} must be a positive integer`, 400, 'VALIDATION_ERROR');
+    }
+    return value;
+  }
+
+  if (typeof value === 'string' && /^[1-9]\d*$/.test(value.trim())) {
+    const parsed = Number(value.trim());
+    if (Number.isSafeInteger(parsed) && parsed > 0) {
+      return parsed;
+    }
+  }
+
+  throw createHttpError(`${fieldName} must be a positive integer`, 400, 'VALIDATION_ERROR');
+}
+
+function parseFilterDate(rawValue, paramName, isEndOfDay = false) {
+  if (typeof rawValue !== 'string' || !rawValue.trim()) {
+    throw createHttpError(`${paramName} must be a valid date`, 400, 'VALIDATION_ERROR');
+  }
+
+  const trimmed = rawValue.trim();
+  const dateOnlyMatch = /^\d{4}-\d{2}-\d{2}$/.test(trimmed);
+  const normalized = dateOnlyMatch
+    ? `${trimmed}${isEndOfDay ? 'T23:59:59.999Z' : 'T00:00:00.000Z'}`
+    : trimmed;
+
+  const parsed = new Date(normalized);
+  if (Number.isNaN(parsed.getTime())) {
+    throw createHttpError(`${paramName} must be a valid ISO date`, 400, 'VALIDATION_ERROR');
+  }
+
+  return parsed.toISOString();
 }
 
 function validateShipmentInput(body = {}) {
@@ -145,7 +197,141 @@ async function createShipment(
   }
 }
 
+async function getShipmentById(rawId) {
+  const shipmentId = parsePositiveInt(rawId, 'id');
+
+  const shipmentResult = await pool.query(
+    `SELECT
+      id,
+      tracking_number,
+      sender_name,
+      receiver_name,
+      receiver_phone,
+      pickup_address,
+      delivery_address,
+      weight_kg,
+      status,
+      created_by,
+      created_at,
+      updated_at
+    FROM shipments
+    WHERE id = $1`,
+    [shipmentId]
+  );
+
+  if (shipmentResult.rows.length === 0) {
+    throw createHttpError('Shipment not found', 404, 'NOT_FOUND');
+  }
+
+  const eventsResult = await pool.query(
+    `SELECT
+      id,
+      shipment_id,
+      from_status,
+      to_status,
+      changed_by,
+      note,
+      created_at
+    FROM shipment_events
+    WHERE shipment_id = $1
+    ORDER BY created_at ASC, id ASC`,
+    [shipmentId]
+  );
+
+  return {
+    ...shipmentResult.rows[0],
+    events: eventsResult.rows,
+  };
+}
+
+async function listShipments(query = {}) {
+  const conditions = [];
+  const params = [];
+
+  if (query.status !== undefined) {
+    if (typeof query.status !== 'string' || !SHIPMENT_STATUSES.includes(query.status.trim())) {
+      throw createHttpError(
+        `Invalid status. Allowed values: ${SHIPMENT_STATUSES.join(', ')}`,
+        400,
+        'VALIDATION_ERROR'
+      );
+    }
+    params.push(query.status.trim());
+    conditions.push(`status = $${params.length}`);
+  }
+
+  let fromIso = null;
+  let toIso = null;
+
+  if (query.from !== undefined) {
+    fromIso = parseFilterDate(query.from, 'from', false);
+    params.push(fromIso);
+    conditions.push(`created_at >= $${params.length}`);
+  }
+
+  if (query.to !== undefined) {
+    toIso = parseFilterDate(query.to, 'to', true);
+    params.push(toIso);
+    conditions.push(`created_at <= $${params.length}`);
+  }
+
+  if (fromIso && toIso && new Date(fromIso) > new Date(toIso)) {
+    throw createHttpError('from date must not be after to date', 400, 'VALIDATION_ERROR');
+  }
+
+  const page = query.page === undefined ? DEFAULT_PAGE : parsePositiveInt(query.page, 'page');
+  const rawLimit =
+    query.limit === undefined ? DEFAULT_LIMIT : parsePositiveInt(query.limit, 'limit');
+  const limit = Math.min(rawLimit, MAX_LIMIT);
+  const offset = (page - 1) * limit;
+
+  const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+
+  const countResult = await pool.query(
+    `SELECT COUNT(*)::int AS total
+    FROM shipments
+    ${whereClause}`,
+    params
+  );
+  const total = countResult.rows[0].total;
+
+  const listParams = [...params, limit, offset];
+  const limitParamIndex = params.length + 1;
+  const offsetParamIndex = params.length + 2;
+
+  const itemsResult = await pool.query(
+    `SELECT
+      id,
+      tracking_number,
+      sender_name,
+      receiver_name,
+      receiver_phone,
+      pickup_address,
+      delivery_address,
+      weight_kg,
+      status,
+      created_by,
+      created_at,
+      updated_at
+    FROM shipments
+    ${whereClause}
+    ORDER BY created_at DESC, id DESC
+    LIMIT $${limitParamIndex} OFFSET $${offsetParamIndex}`,
+    listParams
+  );
+
+  return {
+    items: itemsResult.rows,
+    total,
+    page,
+    limit,
+  };
+}
+
 module.exports = {
+  SHIPMENT_STATUSES,
   createShipment,
+  getShipmentById,
+  listShipments,
   validateShipmentInput,
 };

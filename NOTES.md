@@ -161,3 +161,26 @@ The database guarantees uniqueness with a UNIQUE constraint, and my code generat
 
 ### Why not piece IDs in v1
 A piece ID would let one tracking number cover several parcels. That is a different problem from collisions and it changes the data model (a pieces table, and status per piece or per shipment), so it is out of scope for v1. It is on my list for v2.
+
+## Fleet and Dispatch API: Step 8, reading shipments
+
+### Why list routes cap the limit
+A caller who asks for a huge limit could use up my server's memory and slow the database for everyone. I use a default limit, a maximum of 50, and I reject invalid page and limit values (not a whole number, zero, negative, or above 50) with a 400. I chose rejecting over silently clamping because a quiet correction hides a mistake in the caller's code, and a caller who asked for 500 rows could wrongly think they received everything. A clear error makes the problem visible.
+
+### Why filter values never go into the SQL string
+If I paste a caller's text into the query, a quote character can end my string early and the rest becomes SQL code the caller wrote (SQL injection). With parameterised queries ($1, $2) the SQL and the values travel separately, so the database treats the values only as data. Placeholders cannot be used for column names or ASC/DESC, so anything like that must be checked against a fixed list in my code. Parameters stop injection but do not replace validation, so I also check each filter against allowed values and return 400 for bad ones.
+
+### How the dynamic WHERE clause is built
+I add a condition only for the filters the caller actually sent, and each value gets the next numbered placeholder. The conditions and the values live in two arrays that grow together, so the placeholder numbers always match. The total count uses the same WHERE with no LIMIT.
+
+### Why a stable order
+The list is ordered by created_at DESC, id DESC. Without a fixed order, pages can overlap or skip rows between requests, because the database may return rows in any order. The id breaks ties between shipments created at the same moment.
+
+### Why the list and the single-shipment route return different amounts
+The single shipment returns the shipment and its events, oldest first, because one shipment's history is small and is the reason for opening it. The list does not include events, because it returns many shipments at once, and attaching every shipment's history would make the response large and slow for data a list view rarely needs. A caller who wants the history opens that one shipment.
+
+### Why 400 and 404 are different
+An id that is not a positive whole number is malformed, so it returns 400 without touching the database. A valid id with no matching row returns 404.
+
+### Who can read shipments for now
+Admins and dispatchers only. Couriers get access to their own assignments in the dispatch step, after assignments exist.
